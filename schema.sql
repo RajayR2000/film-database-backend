@@ -209,4 +209,23 @@ VALUES (
   '$2b$12$k8MSIR2SrTuTA1excJL0Fuw78uRrjeqolRcd4XU/OtGSxcB5nwxOW',
   'admin'
 );
+
+ALTER TABLE films ADD COLUMN deleted_at TIMESTAMP NULL;
+
+ALTER TABLE film_production_details ADD COLUMN deleted_at TIMESTAMP NULL;
+
+ALTER TABLE film_authors ADD COLUMN deleted_at TIMESTAMP NULL;
+
+ALTER TABLE film_production_team ADD COLUMN deleted_at TIMESTAMP NULL;
+
+ALTER TABLE film_actors ADD COLUMN deleted_at TIMESTAMP NULL;
+
+ALTER TABLE film_equipment ADD COLUMN deleted_at TIMESTAMP NULL;
+
+ALTER TABLE film_documents ADD COLUMN deleted_at TIMESTAMP NULL;
+
+ALTER TABLE film_institutional_info ADD COLUMN deleted_at TIMESTAMP NULL;
+
+ALTER TABLE film_screenings ADD COLUMN deleted_at TIMESTAMP NULL;
+
 commit;

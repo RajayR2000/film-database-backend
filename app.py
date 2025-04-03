@@ -73,16 +73,26 @@ def admin_dashboard():
         return jsonify({"msg": "Access forbidden: Admins only"}), 403
     return jsonify({"msg": f"Welcome, {identity}! You have admin access."})
 
-###############################
-# Film Endpoints
-###############################
+
+@app.route('/public/films', methods=['GET'])
+def get_public_films():
+    cur = conn.cursor()
+    try:
+        cur.execute("SELECT film_id, title FROM films WHERE deleted_at IS NULL")
+        films = cur.fetchall()
+        return jsonify({"films": films})
+    except Exception as e:
+        logger.exception("Error fetching public films")
+        return jsonify({"error": "Internal Server Error"}), 500
+    finally:
+        cur.close()
 
 
 @app.route('/films', methods=['GET'])
 def get_films():
     cur = conn.cursor()
     try:
-        cur.execute("SELECT * FROM films")
+        cur.execute("SELECT * FROM films WHERE deleted_at IS NULL")
         films = cur.fetchall()
         return jsonify({"films": films})
     except Exception as e:
@@ -97,41 +107,44 @@ def get_films():
 def get_film_details(film_id):
     cur = conn.cursor()
     try:
-        # Fetch basic film information
-        cur.execute("SELECT * FROM films WHERE film_id = %s", (film_id,))
+        # Fetch basic film information, only if not soft-deleted.
+        cur.execute(
+            "SELECT * FROM films WHERE film_id = %s AND deleted_at IS NULL", (film_id,))
         film = cur.fetchone()
         if not film:
             abort(404, description="Film not found")
 
-        # Fetch additional details
+        # Fetch additional details with deleted_at filter.
         cur.execute(
-            "SELECT * FROM film_production_details WHERE film_id = %s", (film_id,))
+            "SELECT * FROM film_production_details WHERE film_id = %s AND deleted_at IS NULL", (film_id,))
         production_details = cur.fetchone()
 
-        cur.execute("SELECT * FROM film_authors WHERE film_id = %s", (film_id,))
+        cur.execute(
+            "SELECT * FROM film_authors WHERE film_id = %s AND deleted_at IS NULL", (film_id,))
         authors = cur.fetchall()
 
         cur.execute(
-            "SELECT * FROM film_production_team WHERE film_id = %s", (film_id,))
+            "SELECT * FROM film_production_team WHERE film_id = %s AND deleted_at IS NULL", (film_id,))
         production_team = cur.fetchall()
 
-        cur.execute("SELECT * FROM film_actors WHERE film_id = %s", (film_id,))
+        cur.execute(
+            "SELECT * FROM film_actors WHERE film_id = %s AND deleted_at IS NULL", (film_id,))
         actors = cur.fetchall()
 
         cur.execute(
-            "SELECT * FROM film_equipment WHERE film_id = %s", (film_id,))
+            "SELECT * FROM film_equipment WHERE film_id = %s AND deleted_at IS NULL", (film_id,))
         equipment = cur.fetchall()
 
         cur.execute(
-            "SELECT * FROM film_documents WHERE film_id = %s", (film_id,))
+            "SELECT * FROM film_documents WHERE film_id = %s AND deleted_at IS NULL", (film_id,))
         documents = cur.fetchall()
 
         cur.execute(
-            "SELECT * FROM film_institutional_info WHERE film_id = %s", (film_id,))
+            "SELECT * FROM film_institutional_info WHERE film_id = %s AND deleted_at IS NULL", (film_id,))
         institutional_info = cur.fetchone()
 
         cur.execute(
-            "SELECT * FROM film_screenings WHERE film_id = %s", (film_id,))
+            "SELECT * FROM film_screenings WHERE film_id = %s AND deleted_at IS NULL", (film_id,))
         screenings = cur.fetchall()
 
         return jsonify({
@@ -283,22 +296,25 @@ def create_film():
             ))
 
         # 9. Insert into film_screenings table.
-        screenings = film_data.get('screenings', {})
-        if screenings.get('screening_date'):
-            cur.execute("""
-                INSERT INTO film_screenings (film_id, screening_date, location_id, organizers, format, audience, film_rights, comment, source)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
-            """, (
-                film_id,
-                screenings.get('screening_date'),
-                screenings.get('location_id'),
-                screenings.get('organizers'),
-                screenings.get('format'),
-                screenings.get('audience'),
-                screenings.get('film_rights'),
-                screenings.get('comment'),
-                screenings.get('source')
-            ))
+        screenings = film_data.get('screenings', [])
+        for screening in screenings:
+            # only insert if screening_date is provided
+            if screening.get('screening_date'):
+                cur.execute("""
+                    INSERT INTO film_screenings 
+                        (film_id, screening_date, location_id, organizers, format, audience, film_rights, comment, source)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                """, (
+                    film_id,
+                    screening.get('screening_date'),
+                    screening.get('location_id'),
+                    screening.get('organizers'),
+                    screening.get('format'),
+                    screening.get('audience'),
+                    screening.get('film_rights'),
+                    screening.get('comment'),
+                    screening.get('source')
+                ))
 
         conn.commit()
         return jsonify({"film_id": film_id, "msg": "Film created successfully"}), 201
@@ -457,22 +473,24 @@ def update_film(film_id):
         # 9. Update film screenings.
         cur.execute(
             "DELETE FROM film_screenings WHERE film_id = %s", (film_id,))
-        screenings = film_data.get('screenings', {})
-        if screenings.get('screening_date'):
-            cur.execute("""
-                INSERT INTO film_screenings (film_id, screening_date, location_id, organizers, format, audience, film_rights, comment, source)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
-            """, (
-                film_id,
-                screenings.get('screening_date'),
-                screenings.get('location_id'),
-                screenings.get('organizers'),
-                screenings.get('format'),
-                screenings.get('audience'),
-                screenings.get('film_rights'),
-                screenings.get('comment'),
-                screenings.get('source')
-            ))
+        screenings = film_data.get('screenings', [])
+        for screening in screenings:
+            if screening.get('screening_date'):
+                cur.execute("""
+                    INSERT INTO film_screenings 
+                        (film_id, screening_date, location_id, organizers, format, audience, film_rights, comment, source)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                """, (
+                    film_id,
+                    screening.get('screening_date'),
+                    screening.get('location_id'),
+                    screening.get('organizers'),
+                    screening.get('format'),
+                    screening.get('audience'),
+                    screening.get('film_rights'),
+                    screening.get('comment'),
+                    screening.get('source')
+                ))
 
         conn.commit()
         return jsonify({"msg": "Film updated successfully"}), 200
@@ -493,34 +511,42 @@ def delete_film(film_id):
 
     cur = conn.cursor()
     try:
-        # In production, you might want to delete dependent records before deleting the film record.
-        cur.execute("DELETE FROM films WHERE film_id = %s", (film_id,))
+        cur.execute("BEGIN")
+
+        # Soft delete the main film record.
+        cur.execute("""
+            UPDATE films 
+            SET deleted_at = NOW()
+            WHERE film_id = %s AND deleted_at IS NULL
+            RETURNING film_id
+        """, (film_id,))
         if cur.rowcount == 0:
             conn.rollback()
-            abort(404, description="Film not found")
+            abort(404, description="Film not found or already deleted")
+
+        # Soft delete dependent records.
+        cur.execute(
+            "UPDATE film_production_details SET deleted_at = NOW() WHERE film_id = %s", (film_id,))
+        cur.execute(
+            "UPDATE film_authors SET deleted_at = NOW() WHERE film_id = %s", (film_id,))
+        cur.execute(
+            "UPDATE film_production_team SET deleted_at = NOW() WHERE film_id = %s", (film_id,))
+        cur.execute(
+            "UPDATE film_actors SET deleted_at = NOW() WHERE film_id = %s", (film_id,))
+        cur.execute(
+            "UPDATE film_equipment SET deleted_at = NOW() WHERE film_id = %s", (film_id,))
+        cur.execute(
+            "UPDATE film_documents SET deleted_at = NOW() WHERE film_id = %s", (film_id,))
+        cur.execute(
+            "UPDATE film_institutional_info SET deleted_at = NOW() WHERE film_id = %s", (film_id,))
+        cur.execute(
+            "UPDATE film_screenings SET deleted_at = NOW() WHERE film_id = %s", (film_id,))
+
         conn.commit()
-        return jsonify({"msg": "Film deleted"}), 200
+        return jsonify({"msg": "Film and dependent records soft deleted successfully"}), 200
     except Exception as e:
         conn.rollback()
         logger.exception("Error deleting film")
-        return jsonify({"error": "Internal Server Error"}), 500
-    finally:
-        cur.close()
-
-##############################
-# Public Endpoint (No Authentication)
-##############################
-
-
-@app.route('/public/films', methods=['GET'])
-def get_public_films():
-    cur = conn.cursor()
-    try:
-        cur.execute("SELECT film_id, title FROM films")
-        films = cur.fetchall()
-        return jsonify({"films": films})
-    except Exception as e:
-        logger.exception("Error fetching public films")
         return jsonify({"error": "Internal Server Error"}), 500
     finally:
         cur.close()
