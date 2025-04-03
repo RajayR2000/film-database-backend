@@ -165,6 +165,65 @@ def get_film_details(film_id):
         cur.close()
 
 
+@app.route('/films/full', methods=['GET'])
+@jwt_required()
+def get_full_film_data():
+    try:
+        with conn.cursor() as cur:
+            query = """
+                SELECT
+                  f.film_id,
+                  f.title,
+                  f.release_year,
+                  f.runtime,
+                  f.synopsis,
+                  f.created_at,
+                  f.updated_at,
+
+                  pd.production_timeframe,
+                  pd.post_production_studio,
+                  pd.production_comments,
+
+                  loc.name AS location_name,
+                  loc.address AS location_address,
+                  loc.city AS location_city,
+                  loc.state AS location_state,
+                  loc.country AS location_country,
+                  loc.latitude AS location_latitude,
+                  loc.longitude AS location_longitude,
+                  loc.comment AS location_comment,
+
+                  json_agg(DISTINCT jsonb_build_object('role', a.role, 'name', a.name, 'comment', a.comment)) FILTER (WHERE a.author_id IS NOT NULL) AS authors,
+                  json_agg(DISTINCT jsonb_build_object('department', t.department, 'name', t.name, 'role', t.role, 'comment', t.comment)) FILTER (WHERE t.team_member_id IS NOT NULL) AS team,
+                  json_agg(DISTINCT jsonb_build_object('actor_name', ac.actor_name, 'character_name', ac.character_name, 'comment', ac.comment)) FILTER (WHERE ac.actor_id IS NOT NULL) AS actors,
+                  json_agg(DISTINCT jsonb_build_object('equipment_name', eq.equipment_name, 'description', eq.description, 'comment', eq.comment)) FILTER (WHERE eq.equipment_id IS NOT NULL) AS equipment,
+                  json_agg(DISTINCT jsonb_build_object('document_type', doc.document_type, 'file_url', doc.file_url, 'comment', doc.comment)) FILTER (WHERE doc.document_id IS NOT NULL) AS documents,
+                  json_agg(DISTINCT jsonb_build_object('production_company', info.production_company, 'funding_company', info.funding_company, 'funding_comment', info.funding_comment, 'source', info.source)) FILTER (WHERE info.info_id IS NOT NULL) AS institutional_info,
+                  json_agg(DISTINCT jsonb_build_object('screening_date', s.screening_date, 'organizers', s.organizers, 'format', s.format, 'audience', s.audience, 'film_rights', s.film_rights, 'comment', s.comment, 'source', s.source)) FILTER (WHERE s.screening_id IS NOT NULL) AS screenings
+
+                FROM films f
+                LEFT JOIN film_production_details pd ON f.film_id = pd.film_id
+                LEFT JOIN locations loc ON pd.shooting_location_id = loc.location_id
+                LEFT JOIN film_authors a ON f.film_id = a.film_id
+                LEFT JOIN film_production_team t ON f.film_id = t.film_id
+                LEFT JOIN film_actors ac ON f.film_id = ac.film_id
+                LEFT JOIN film_equipment eq ON f.film_id = eq.film_id
+                LEFT JOIN film_documents doc ON f.film_id = doc.film_id
+                LEFT JOIN film_institutional_info info ON f.film_id = info.film_id
+                LEFT JOIN film_screenings s ON f.film_id = s.film_id
+
+                WHERE f.deleted_at IS NULL
+                GROUP BY f.film_id, pd.production_detail_id, loc.location_id;
+            """
+            cur.execute(query)
+            films = cur.fetchall()
+        return jsonify({"films": films}), 200
+    except Exception as e:
+        logger.error(f"Error fetching full film data: {e}")
+        return jsonify({"error": "Failed to fetch full film data"}), 500
+
+
+
 @app.route('/films', methods=['POST'], endpoint='create_film')
 @jwt_required()
 def create_film():
