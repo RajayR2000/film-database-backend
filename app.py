@@ -1,3 +1,4 @@
+from datetime import timedelta
 import os
 import logging
 from flask import Flask, request, jsonify, abort
@@ -18,6 +19,8 @@ logger = logging.getLogger(__name__)
 
 # Configure JWT
 app.config['JWT_SECRET_KEY'] = 'your_jwt_secret'  # Change this to a secure key
+app.config['JWT_ACCESS_TOKEN_EXPIRES'] = timedelta(days=10)
+
 jwt = JWTManager(app)
 
 # Configure PostgreSQL connection
@@ -221,7 +224,6 @@ def get_full_film_data():
     except Exception as e:
         logger.error(f"Error fetching full film data: {e}")
         return jsonify({"error": "Failed to fetch full film data"}), 500
-
 
 
 @app.route('/films', methods=['POST'], endpoint='create_film')
