@@ -228,4 +228,6 @@ ALTER TABLE film_institutional_info ADD COLUMN deleted_at TIMESTAMP NULL;
 
 ALTER TABLE film_screenings ADD COLUMN deleted_at TIMESTAMP NULL;
 
+ALTER TABLE films ADD COLUMN av_annotate_link varchar(100);
+
 commit;
