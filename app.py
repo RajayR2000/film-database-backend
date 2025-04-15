@@ -25,7 +25,7 @@ jwt = JWTManager(app)
 
 # Configure PostgreSQL connection
 DATABASE_URL = os.environ.get(
-    'DATABASE_URL', 'postgres://postgres:1234@localhost:5432/films')
+    'DATABASE_URL', 'postgres://postgres:postgres@localhost:5432/filmdb')
 conn = psycopg2.connect(DATABASE_URL, cursor_factory=RealDictCursor)
 # Disable autocommit for explicit transaction management.
 conn.autocommit = False
