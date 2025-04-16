@@ -18,17 +18,17 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # Configure JWT
-app.config['JWT_SECRET_KEY'] = 'your_jwt_secret'  # Change this to a secure key
+app.config['JWT_SECRET_KEY'] = 'your_jwt_secret'  # Change to a secure key
 app.config['JWT_ACCESS_TOKEN_EXPIRES'] = timedelta(days=10)
-
 jwt = JWTManager(app)
 
 # Configure PostgreSQL connection
 DATABASE_URL = os.environ.get(
-    'DATABASE_URL', 'postgres://postgres:postgres@localhost:5432/filmdb')
+    'DATABASE_URL',
+    'postgres://postgres:postgres@localhost:5432/filmdb'
+)
 conn = psycopg2.connect(DATABASE_URL, cursor_factory=RealDictCursor)
-# Disable autocommit for explicit transaction management.
-conn.autocommit = False
+conn.autocommit = False  # explicit transaction management
 
 ###############################
 # Login Endpoint
@@ -39,7 +39,6 @@ conn.autocommit = False
 def login():
     username = request.json.get('username')
     password = request.json.get('password')
-
     if not username or not password:
         return jsonify({"msg": "Username and password required"}), 400
 
@@ -47,23 +46,22 @@ def login():
     try:
         cur.execute("SELECT * FROM users WHERE username = %s", (username,))
         user = cur.fetchone()
-        # For debugging only; remove in production
         logger.info("User from DB: %s", user)
-    except Exception as e:
+    except Exception:
         logger.exception("Error during login")
         return jsonify({"msg": "Internal Server Error"}), 500
     finally:
         cur.close()
 
-    if user and bcrypt.checkpw(password.encode('utf-8'), user['password_hash'].encode('utf-8')):
-        access_token = create_access_token(
-            identity=username, additional_claims={'role': user['role']})
-        return jsonify(access_token=access_token)
-    else:
-        return jsonify({"msg": "Bad username or password"}), 401
+    if user and bcrypt.checkpw(password.encode(), user['password_hash'].encode()):
+        token = create_access_token(
+            identity=username, additional_claims={'role': user['role']}
+        )
+        return jsonify(access_token=token), 200
+    return jsonify({"msg": "Bad username or password"}), 401
 
 ###############################
-# Protected Admin Example
+# Admin Example
 ###############################
 
 
@@ -74,7 +72,11 @@ def admin_dashboard():
     claims = get_jwt()
     if claims.get('role') != 'admin':
         return jsonify({"msg": "Access forbidden: Admins only"}), 403
-    return jsonify({"msg": f"Welcome, {identity}! You have admin access."})
+    return jsonify({"msg": f"Welcome, {identity}! You have admin access."}), 200
+
+###############################
+# Public & Unprotected Films
+###############################
 
 
 @app.route('/public/films', methods=['GET'])
@@ -82,9 +84,8 @@ def get_public_films():
     cur = conn.cursor()
     try:
         cur.execute("SELECT film_id, title FROM films WHERE deleted_at IS NULL")
-        films = cur.fetchall()
-        return jsonify({"films": films})
-    except Exception as e:
+        return jsonify({"films": cur.fetchall()}), 200
+    except Exception:
         logger.exception("Error fetching public films")
         return jsonify({"error": "Internal Server Error"}), 500
     finally:
@@ -96,13 +97,16 @@ def get_films():
     cur = conn.cursor()
     try:
         cur.execute("SELECT * FROM films WHERE deleted_at IS NULL")
-        films = cur.fetchall()
-        return jsonify({"films": films})
-    except Exception as e:
+        return jsonify({"films": cur.fetchall()}), 200
+    except Exception:
         logger.exception("Error fetching films")
         return jsonify({"error": "Internal Server Error"}), 500
     finally:
         cur.close()
+
+###############################
+# Single Film Details (with city/country)
+###############################
 
 
 @app.route('/films/<int:film_id>', methods=['GET'])
@@ -110,44 +114,89 @@ def get_films():
 def get_film_details(film_id):
     cur = conn.cursor()
     try:
-        # Fetch basic film information, only if not soft-deleted.
+        # Basic film
         cur.execute(
-            "SELECT * FROM films WHERE film_id = %s AND deleted_at IS NULL", (film_id,))
+            "SELECT * FROM films WHERE film_id = %s AND deleted_at IS NULL",
+            (film_id,)
+        )
         film = cur.fetchone()
         if not film:
             abort(404, description="Film not found")
 
-        # Fetch additional details with deleted_at filter.
-        cur.execute(
-            "SELECT * FROM film_production_details WHERE film_id = %s AND deleted_at IS NULL", (film_id,))
+        # Production details: include shooting_city & shooting_country
+        cur.execute("""
+            SELECT production_timeframe,
+                   post_production_studio,
+                   production_comments,
+                   shooting_city,
+                   shooting_country
+              FROM film_production_details
+             WHERE film_id = %s AND deleted_at IS NULL
+        """, (film_id,))
         production_details = cur.fetchone()
 
+        # Authors
         cur.execute(
-            "SELECT * FROM film_authors WHERE film_id = %s AND deleted_at IS NULL", (film_id,))
+            "SELECT role, name, comment FROM film_authors WHERE film_id=%s AND deleted_at IS NULL",
+            (film_id,)
+        )
         authors = cur.fetchall()
 
+        # Production team
         cur.execute(
-            "SELECT * FROM film_production_team WHERE film_id = %s AND deleted_at IS NULL", (film_id,))
+            "SELECT department, name, role, comment FROM film_production_team WHERE film_id=%s AND deleted_at IS NULL",
+            (film_id,)
+        )
         production_team = cur.fetchall()
 
+        # Actors
         cur.execute(
-            "SELECT * FROM film_actors WHERE film_id = %s AND deleted_at IS NULL", (film_id,))
+            "SELECT actor_name, character_name, comment FROM film_actors WHERE film_id=%s AND deleted_at IS NULL",
+            (film_id,)
+        )
         actors = cur.fetchall()
 
+        # Equipment
         cur.execute(
-            "SELECT * FROM film_equipment WHERE film_id = %s AND deleted_at IS NULL", (film_id,))
+            "SELECT equipment_name, description, comment FROM film_equipment WHERE film_id=%s AND deleted_at IS NULL",
+            (film_id,)
+        )
         equipment = cur.fetchall()
 
+        # Documents
         cur.execute(
-            "SELECT * FROM film_documents WHERE film_id = %s AND deleted_at IS NULL", (film_id,))
+            "SELECT document_type, file_url, comment FROM film_documents WHERE film_id=%s AND deleted_at IS NULL",
+            (film_id,)
+        )
         documents = cur.fetchall()
 
-        cur.execute(
-            "SELECT * FROM film_institutional_info WHERE film_id = %s AND deleted_at IS NULL", (film_id,))
+        # Institutional info: include institutional_city & institutional_country
+        cur.execute("""
+            SELECT production_company,
+                   funding_company,
+                   funding_comment,
+                   source,
+                   institutional_city,
+                   institutional_country
+              FROM film_institutional_info
+             WHERE film_id = %s AND deleted_at IS NULL
+        """, (film_id,))
         institutional_info = cur.fetchone()
 
-        cur.execute(
-            "SELECT * FROM film_screenings WHERE film_id = %s AND deleted_at IS NULL", (film_id,))
+        # Screenings: include screening_city & screening_country
+        cur.execute("""
+            SELECT screening_date,
+                   screening_city,
+                   screening_country,
+                   organizers,
+                   format,
+                   audience,
+                   film_rights,
+                   comment,
+                   source
+              FROM film_screenings
+             WHERE film_id = %s AND deleted_at IS NULL
+        """, (film_id,))
         screenings = cur.fetchall()
 
         return jsonify({
@@ -160,12 +209,17 @@ def get_film_details(film_id):
             "documents": documents,
             "institutionalInfo": institutional_info,
             "screenings": screenings
-        })
-    except Exception as e:
+        }), 200
+
+    except Exception:
         logger.exception("Error fetching film details")
         return jsonify({"error": "Internal Server Error"}), 500
     finally:
         cur.close()
+
+###############################
+# Full Export (/films/full)
+###############################
 
 
 @app.route('/films/full', methods=['GET'])
@@ -173,7 +227,7 @@ def get_film_details(film_id):
 def get_full_film_data():
     try:
         with conn.cursor() as cur:
-            query = """
+            cur.execute("""
                 SELECT
                   f.film_id,
                   f.title,
@@ -182,34 +236,74 @@ def get_full_film_data():
                   f.synopsis,
                   f.created_at,
                   f.updated_at,
-                  f.av_annotate_link as link,
+                  f.av_annotate_link AS link,
 
                   pd.production_timeframe,
                   pd.post_production_studio,
                   pd.production_comments,
+                  pd.shooting_city    AS production_city,
+                  pd.shooting_country AS production_country,
 
-                  loc.name AS location_name,
-                  loc.address AS location_address,
-                  loc.city AS location_city,
-                  loc.state AS location_state,
-                  loc.country AS location_country,
-                  loc.latitude AS location_latitude,
-                  loc.longitude AS location_longitude,
-                  loc.comment AS location_comment,
+                  json_agg(DISTINCT jsonb_build_object(
+                    'role', a.role,
+                    'name', a.name,
+                    'comment', a.comment
+                  )) FILTER (WHERE a.role IS NOT NULL) AS authors,
 
-                  json_agg(DISTINCT jsonb_build_object('role', a.role, 'name', a.name, 'comment', a.comment)) FILTER (WHERE a.author_id IS NOT NULL) AS authors,
-                  json_agg(DISTINCT jsonb_build_object('department', t.department, 'name', t.name, 'role', t.role, 'comment', t.comment)) FILTER (WHERE t.team_member_id IS NOT NULL) AS team,
-                  json_agg(DISTINCT jsonb_build_object('actor_name', ac.actor_name, 'character_name', ac.character_name, 'comment', ac.comment)) FILTER (WHERE ac.actor_id IS NOT NULL) AS actors,
-                  json_agg(DISTINCT jsonb_build_object('equipment_name', eq.equipment_name, 'description', eq.description, 'comment', eq.comment)) FILTER (WHERE eq.equipment_id IS NOT NULL) AS equipment,
-                  json_agg(DISTINCT jsonb_build_object('document_type', doc.document_type, 'file_url', doc.file_url, 'comment', doc.comment)) FILTER (WHERE doc.document_id IS NOT NULL) AS documents,
-                  json_agg(DISTINCT jsonb_build_object('production_company', info.production_company, 'funding_company', info.funding_company, 'funding_comment', info.funding_comment, 'source', info.source)) FILTER (WHERE info.info_id IS NOT NULL) AS institutional_info,
-                  json_agg(DISTINCT jsonb_build_object('screening_date', s.screening_date, 'organizers', s.organizers, 'format', s.format, 'audience', s.audience, 'film_rights', s.film_rights, 'comment', s.comment, 'source', s.source)) FILTER (WHERE s.screening_id IS NOT NULL) AS screenings,
-                  concat('"',f.title, '". EAC Lab Database. Indiana University Bloomington. Accessed ' ,TO_CHAR(NOW(), 'DD-MM-YYYY'), '. https://localhost:5000/films') as reference
+                  json_agg(DISTINCT jsonb_build_object(
+                    'department', t.department,
+                    'name', t.name,
+                    'role', t.role,
+                    'comment', t.comment
+                  )) FILTER (WHERE t.department IS NOT NULL) AS team,
 
+                  json_agg(DISTINCT jsonb_build_object(
+                    'actor_name', ac.actor_name,
+                    'character_name', ac.character_name,
+                    'comment', ac.comment
+                  )) FILTER (WHERE ac.actor_name IS NOT NULL) AS actors,
+
+                  json_agg(DISTINCT jsonb_build_object(
+                    'equipment_name', eq.equipment_name,
+                    'description', eq.description,
+                    'comment', eq.comment
+                  )) FILTER (WHERE eq.equipment_name IS NOT NULL) AS equipment,
+
+                  json_agg(DISTINCT jsonb_build_object(
+                    'document_type', doc.document_type,
+                    'file_url', doc.file_url,
+                    'comment', doc.comment
+                  )) FILTER (WHERE doc.document_type IS NOT NULL) AS documents,
+
+                  json_agg(DISTINCT jsonb_build_object(
+                    'production_company', info.production_company,
+                    'funding_company', info.funding_company,
+                    'funding_comment', info.funding_comment,
+                    'source', info.source,
+                    'institutional_city', info.institutional_city,
+                    'institutional_country', info.institutional_country
+                  )) FILTER (WHERE info.production_company IS NOT NULL) AS institutional_info,
+
+                  json_agg(DISTINCT jsonb_build_object(
+                    'screening_date', s.screening_date,
+                    'screening_city', s.screening_city,
+                    'screening_country', s.screening_country,
+                    'organizers', s.organizers,
+                    'format', s.format,
+                    'audience', s.audience,
+                    'film_rights', s.film_rights,
+                    'comment', s.comment,
+                    'source', s.source
+                  )) FILTER (WHERE s.screening_date IS NOT NULL) AS screenings,
+
+                  concat(
+                    '"', f.title, '". EAC Lab Database. Indiana University Bloomington. ',
+                    'Accessed ', TO_CHAR(NOW(), 'DD-MM-YYYY'),
+                    '. https://localhost:5001/films'
+                  ) AS reference
 
                 FROM films f
                 LEFT JOIN film_production_details pd ON f.film_id = pd.film_id
-                LEFT JOIN locations loc ON pd.shooting_location_id = loc.location_id
                 LEFT JOIN film_authors a ON f.film_id = a.film_id
                 LEFT JOIN film_production_team t ON f.film_id = t.film_id
                 LEFT JOIN film_actors ac ON f.film_id = ac.film_id
@@ -217,173 +311,177 @@ def get_full_film_data():
                 LEFT JOIN film_documents doc ON f.film_id = doc.film_id
                 LEFT JOIN film_institutional_info info ON f.film_id = info.film_id
                 LEFT JOIN film_screenings s ON f.film_id = s.film_id
-
                 WHERE f.deleted_at IS NULL
-                GROUP BY f.film_id, pd.production_detail_id, loc.location_id;
-            """
-            cur.execute(query)
+                GROUP BY
+                  f.film_id,
+                  pd.production_detail_id
+            """)
             films = cur.fetchall()
         return jsonify({"films": films}), 200
+
     except Exception as e:
-        logger.error(f"Error fetching full film data: {e}")
+        logger.exception("Error fetching full film data")
         return jsonify({"error": "Failed to fetch full film data"}), 500
 
+###############################
+# Create / Update / Delete Film
+###############################
 
-@app.route('/films', methods=['POST'], endpoint='create_film')
+
+@app.route('/films', methods=['POST'])
 @jwt_required()
 def create_film():
-    # Only allow admin users to add films.
     claims = get_jwt()
     if claims.get('role') != 'admin':
         return jsonify({"msg": "Access forbidden: Admins only"}), 403
 
-    film_data = request.get_json()
-    if not film_data:
-        return jsonify({"msg": "Invalid JSON payload"}), 400
-
+    film_data = request.get_json() or {}
     cur = conn.cursor()
     try:
-        # Begin transaction (explicitly starting a transaction is optional here since autocommit is off)
         cur.execute("BEGIN")
-
-        # 1. Insert into films table
+        # 1) films
         cur.execute("""
-            INSERT INTO films (title, release_year, runtime, synopsis,av_annotate_link)
-            VALUES (%s, %s, %s, %s, %s)
+            INSERT INTO films
+              (title, release_year, runtime, synopsis, av_annotate_link)
+            VALUES (%s,%s,%s,%s,%s)
             RETURNING film_id
         """, (
             film_data.get('title'),
             film_data.get('release_year'),
             film_data.get('runtime'),
             film_data.get('synopsis'),
-            film_data.get('av_annotate_link')
+            film_data.get('av_annotate_link'),
         ))
         film_id = cur.fetchone()['film_id']
 
-        # 2. Insert into film_production_details table.
+        # 2) production details
         prod = film_data.get('productionDetails', {})
-        if prod:
-            cur.execute("""
-                INSERT INTO film_production_details
-                    (film_id, production_timeframe, shooting_location_id,
-                     post_production_studio, production_comments)
-                VALUES (%s, %s, %s, %s, %s)
-            """, (
-                film_id,
-                prod.get('production_timeframe'),
-                prod.get('shooting_location_id'),
-                prod.get('post_production_studio'),
-                prod.get('production_comments')
-            ))
+        cur.execute("""
+            INSERT INTO film_production_details
+              (film_id, production_timeframe, shooting_city, shooting_country,
+               post_production_studio, production_comments)
+            VALUES (%s,%s,%s,%s,%s,%s)
+        """, (
+            film_id,
+            prod.get('production_timeframe'),
+            prod.get('shooting_city'),
+            prod.get('shooting_country'),
+            prod.get('post_production_studio'),
+            prod.get('production_comments'),
+        ))
 
-        # 3. Insert into film_authors table.
-        authors = film_data.get('authors', {})
-        if authors.get('screenwriter'):
-            cur.execute("""
-                INSERT INTO film_authors (film_id, role, name, comment)
-                VALUES (%s, 'Screenwriter', %s, %s)
-            """, (film_id, authors.get('screenwriter'), authors.get('screenwriter_comment', '')))
-        if authors.get('filmmaker'):
-            cur.execute("""
-                INSERT INTO film_authors (film_id, role, name, comment)
-                VALUES (%s, 'Filmmaker', %s, %s)
-            """, (film_id, authors.get('filmmaker'), authors.get('filmmaker_comment', '')))
-        if authors.get('executive_producer'):
-            cur.execute("""
-                INSERT INTO film_authors (film_id, role, name, comment)
-                VALUES (%s, 'Executive Producer', %s, %s)
-            """, (film_id, authors.get('executive_producer'), authors.get('executive_producer_comment', '')))
+        # 3) authors
+        for role_key, role_name in [
+            ('screenwriter', 'Screenwriter'),
+            ('filmmaker', 'Filmmaker'),
+            ('executive_producer', 'Executive Producer'),
+        ]:
+            if film_data['authors'].get(role_key):
+                cur.execute(f"""
+                    INSERT INTO film_authors
+                      (film_id, role, name, comment)
+                    VALUES (%s,%s,%s,%s)
+                """, (
+                    film_id,
+                    role_name,
+                    film_data['authors'][role_key],
+                    film_data['authors'][f"{role_key}_comment"],
+                ))
 
-        # 4. Insert into film_production_team table.
-        production_team = film_data.get('productionTeam', [])
-        for member in production_team:
+        # 4) production team
+        for member in film_data.get('productionTeam', []):
             cur.execute("""
-                INSERT INTO film_production_team (film_id, department, name, role, comment)
-                VALUES (%s, %s, %s, %s, %s)
+                INSERT INTO film_production_team
+                  (film_id, department, name, role, comment)
+                VALUES (%s,%s,%s,%s,%s)
             """, (
                 film_id,
                 member.get('department'),
                 member.get('name'),
                 member.get('role'),
-                member.get('comment')
+                member.get('comment'),
             ))
 
-        # 5. Insert into film_actors table.
-        actors_str = film_data.get('actors', '')
-        if actors_str:
-            actor_list = [actor.strip()
-                          for actor in actors_str.split(',') if actor.strip()]
-            for actor in actor_list:
+        # 5) actors
+        for name in (film_data.get('actors', '') or '').split(','):
+            nm = name.strip()
+            if nm:
                 cur.execute("""
-                    INSERT INTO film_actors (film_id, actor_name, character_name, comment)
-                    VALUES (%s, %s, NULL, NULL)
-                """, (film_id, actor))
+                    INSERT INTO film_actors
+                      (film_id, actor_name, character_name, comment)
+                    VALUES (%s,%s,NULL,NULL)
+                """, (film_id, nm))
 
-        # 6. Insert into film_equipment table.
-        equipment = film_data.get('equipment', {})
-        if equipment.get('equipment_name'):
+        # 6) equipment
+        eq = film_data.get('equipment', {})
+        if eq.get('equipment_name'):
             cur.execute("""
-                INSERT INTO film_equipment (film_id, equipment_name, description, comment)
-                VALUES (%s, %s, %s, %s)
+                INSERT INTO film_equipment
+                  (film_id, equipment_name, description, comment)
+                VALUES (%s,%s,%s,%s)
             """, (
                 film_id,
-                equipment.get('equipment_name'),
-                equipment.get('description'),
-                equipment.get('comment')
+                eq.get('equipment_name'),
+                eq.get('description'),
+                eq.get('comment'),
             ))
 
-        # 7. Insert into film_documents table.
-        documents = film_data.get('documents', {})
-        if documents.get('document_type'):
+        # 7) documents
+        doc = film_data.get('documents', {})
+        if doc.get('document_type'):
             cur.execute("""
-                INSERT INTO film_documents (film_id, document_type, file_url, comment)
-                VALUES (%s, %s, %s, %s)
+                INSERT INTO film_documents
+                  (film_id, document_type, file_url, comment)
+                VALUES (%s,%s,%s,%s)
             """, (
                 film_id,
-                documents.get('document_type'),
-                documents.get('file_url'),
-                documents.get('comment')
+                doc.get('document_type'),
+                doc.get('file_url'),
+                doc.get('comment'),
             ))
 
-        # 8. Insert into film_institutional_info table.
+        # 8) institutional info
         inst = film_data.get('institutionalInfo', {})
-        if inst.get('production_company'):
-            cur.execute("""
-                INSERT INTO film_institutional_info (film_id, production_company, funding_company, funding_comment, source, funding_location_id)
-                VALUES (%s, %s, %s, %s, %s, %s)
-            """, (
-                film_id,
-                inst.get('production_company'),
-                inst.get('funding_company'),
-                inst.get('funding_comment'),
-                inst.get('source'),
-                inst.get('funding_location_id')
-            ))
+        cur.execute("""
+            INSERT INTO film_institutional_info
+              (film_id, production_company, funding_company, funding_comment,
+               source, institutional_city, institutional_country)
+            VALUES (%s,%s,%s,%s,%s,%s,%s)
+        """, (
+            film_id,
+            inst.get('production_company'),
+            inst.get('funding_company'),
+            inst.get('funding_comment'),
+            inst.get('source'),
+            inst.get('institutional_city'),
+            inst.get('institutional_country'),
+        ))
 
-        # 9. Insert into film_screenings table.
-        screenings = film_data.get('screenings', [])
-        for screening in screenings:
-            # only insert if screening_date is provided
-            if screening.get('screening_date'):
+        # 9) screenings
+        for s in film_data.get('screenings', []):
+            if s.get('screening_date'):
                 cur.execute("""
-                    INSERT INTO film_screenings 
-                        (film_id, screening_date, location_id, organizers, format, audience, film_rights, comment, source)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    INSERT INTO film_screenings
+                      (film_id, screening_date, screening_city, screening_country,
+                       organizers, format, audience, film_rights, comment, source)
+                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
                 """, (
                     film_id,
-                    screening.get('screening_date'),
-                    screening.get('location_id'),
-                    screening.get('organizers'),
-                    screening.get('format'),
-                    screening.get('audience'),
-                    screening.get('film_rights'),
-                    screening.get('comment'),
-                    screening.get('source')
+                    s.get('screening_date'),
+                    s.get('screening_city'),
+                    s.get('screening_country'),
+                    s.get('organizers'),
+                    s.get('format'),
+                    s.get('audience'),
+                    s.get('film_rights'),
+                    s.get('comment'),
+                    s.get('source'),
                 ))
 
         conn.commit()
         return jsonify({"film_id": film_id, "msg": "Film created successfully"}), 201
-    except Exception as e:
+
+    except Exception:
         conn.rollback()
         logger.exception("Error creating film")
         return jsonify({"error": "Internal Server Error"}), 500
@@ -398,170 +496,162 @@ def update_film(film_id):
     if claims.get('role') != 'admin':
         return jsonify({"msg": "Access forbidden: Admins only"}), 403
 
-    film_data = request.get_json()
-    if not film_data:
-        return jsonify({"msg": "Invalid JSON payload"}), 400
-
+    film_data = request.get_json() or {}
     cur = conn.cursor()
     try:
         cur.execute("BEGIN")
-        # 1. Update basic film info.
+        # 1) basic info
         cur.execute("""
-            UPDATE films
-            SET title = %s,
-                release_year = %s,
-                runtime = %s,
-                synopsis = %s,
-                av_annotate_link = %s,
-                updated_at = NOW()
-            WHERE film_id = %s
-            RETURNING film_id
+            UPDATE films SET
+              title=%s, release_year=%s, runtime=%s,
+              synopsis=%s, av_annotate_link=%s, updated_at=NOW()
+            WHERE film_id=%s
         """, (
             film_data.get('title'),
             film_data.get('release_year'),
             film_data.get('runtime'),
             film_data.get('synopsis'),
             film_data.get('av_annotate_link'),
-            film_id
+            film_id,
         ))
         if cur.rowcount == 0:
             conn.rollback()
             abort(404, description="Film not found")
 
-        # 2. Update production details.
+        # 2) production details
+        cur.execute(
+            "DELETE FROM film_production_details WHERE film_id=%s", (film_id,))
         prod = film_data.get('productionDetails', {})
-        cur.execute(
-            "DELETE FROM film_production_details WHERE film_id = %s", (film_id,))
-        if prod:
-            cur.execute("""
-                INSERT INTO film_production_details 
-                    (film_id, production_timeframe, shooting_location_id, post_production_studio, production_comments)
-                VALUES (%s, %s, %s, %s, %s)
-            """, (
-                film_id,
-                prod.get('production_timeframe'),
-                prod.get('shooting_location_id'),
-                prod.get('post_production_studio'),
-                prod.get('production_comments')
-            ))
+        cur.execute("""
+            INSERT INTO film_production_details
+              (film_id, production_timeframe, shooting_city, shooting_country,
+               post_production_studio, production_comments)
+            VALUES (%s,%s,%s,%s,%s,%s)
+        """, (
+            film_id,
+            prod.get('production_timeframe'),
+            prod.get('shooting_city'),
+            prod.get('shooting_country'),
+            prod.get('post_production_studio'),
+            prod.get('production_comments'),
+        ))
 
-        # 3. Update film authors.
-        cur.execute("DELETE FROM film_authors WHERE film_id = %s", (film_id,))
-        authors = film_data.get('authors', {})
-        if authors.get('screenwriter'):
-            cur.execute("""
-                INSERT INTO film_authors (film_id, role, name, comment)
-                VALUES (%s, 'Screenwriter', %s, %s)
-            """, (film_id, authors.get('screenwriter'), authors.get('screenwriter_comment', '')))
-        if authors.get('filmmaker'):
-            cur.execute("""
-                INSERT INTO film_authors (film_id, role, name, comment)
-                VALUES (%s, 'Filmmaker', %s, %s)
-            """, (film_id, authors.get('filmmaker'), authors.get('filmmaker_comment', '')))
-        if authors.get('executive_producer'):
-            cur.execute("""
-                INSERT INTO film_authors (film_id, role, name, comment)
-                VALUES (%s, 'Executive Producer', %s, %s)
-            """, (film_id, authors.get('executive_producer'), authors.get('executive_producer_comment', '')))
-
-        # 4. Update production team.
-        cur.execute(
-            "DELETE FROM film_production_team WHERE film_id = %s", (film_id,))
-        production_team = film_data.get('productionTeam', [])
-        for member in production_team:
-            cur.execute("""
-                INSERT INTO film_production_team (film_id, department, name, role, comment)
-                VALUES (%s, %s, %s, %s, %s)
-            """, (
-                film_id,
-                member.get('department'),
-                member.get('name'),
-                member.get('role'),
-                member.get('comment')
-            ))
-
-        # 5. Update film actors.
-        cur.execute("DELETE FROM film_actors WHERE film_id = %s", (film_id,))
-        actors_str = film_data.get('actors', '')
-        if actors_str:
-            actor_list = [a.strip()
-                          for a in actors_str.split(',') if a.strip()]
-            for actor in actor_list:
-                cur.execute("""
-                    INSERT INTO film_actors (film_id, actor_name, character_name, comment)
-                    VALUES (%s, %s, NULL, NULL)
-                """, (film_id, actor))
-
-        # 6. Update film equipment.
-        cur.execute("DELETE FROM film_equipment WHERE film_id = %s", (film_id,))
-        equipment = film_data.get('equipment', {})
-        if equipment.get('equipment_name'):
-            cur.execute("""
-                INSERT INTO film_equipment (film_id, equipment_name, description, comment)
-                VALUES (%s, %s, %s, %s)
-            """, (
-                film_id,
-                equipment.get('equipment_name'),
-                equipment.get('description'),
-                equipment.get('comment')
-            ))
-
-        # 7. Update film documents.
-        cur.execute("DELETE FROM film_documents WHERE film_id = %s", (film_id,))
-        documents = film_data.get('documents', {})
-        if documents.get('document_type'):
-            cur.execute("""
-                INSERT INTO film_documents (film_id, document_type, file_url, comment)
-                VALUES (%s, %s, %s, %s)
-            """, (
-                film_id,
-                documents.get('document_type'),
-                documents.get('file_url'),
-                documents.get('comment')
-            ))
-
-        # 8. Update institutional & financial info.
-        cur.execute(
-            "DELETE FROM film_institutional_info WHERE film_id = %s", (film_id,))
-        inst = film_data.get('institutionalInfo', {})
-        if inst.get('production_company'):
-            cur.execute("""
-                INSERT INTO film_institutional_info (film_id, production_company, funding_company, funding_comment, source, funding_location_id)
-                VALUES (%s, %s, %s, %s, %s, %s)
-            """, (
-                film_id,
-                inst.get('production_company'),
-                inst.get('funding_company'),
-                inst.get('funding_comment'),
-                inst.get('source'),
-                inst.get('funding_location_id')
-            ))
-
-        # 9. Update film screenings.
-        cur.execute(
-            "DELETE FROM film_screenings WHERE film_id = %s", (film_id,))
-        screenings = film_data.get('screenings', [])
-        for screening in screenings:
-            if screening.get('screening_date'):
-                cur.execute("""
-                    INSERT INTO film_screenings 
-                        (film_id, screening_date, location_id, organizers, format, audience, film_rights, comment, source)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+        # 3) authors
+        cur.execute("DELETE FROM film_authors WHERE film_id=%s", (film_id,))
+        for key, role in [('screenwriter', 'Screenwriter'), ('filmmaker', 'Filmmaker'), ('executive_producer', 'Executive Producer')]:
+            if film_data['authors'].get(key):
+                cur.execute(f"""
+                    INSERT INTO film_authors
+                      (film_id, role, name, comment)
+                    VALUES (%s,%s,%s,%s)
                 """, (
                     film_id,
-                    screening.get('screening_date'),
-                    screening.get('location_id'),
-                    screening.get('organizers'),
-                    screening.get('format'),
-                    screening.get('audience'),
-                    screening.get('film_rights'),
-                    screening.get('comment'),
-                    screening.get('source')
+                    role,
+                    film_data['authors'][key],
+                    film_data['authors'][f"{key}_comment"],
                 ))
 
+        # 4) production team
+        cur.execute(
+            "DELETE FROM film_production_team WHERE film_id=%s", (film_id,))
+        for m in film_data.get('productionTeam', []):
+            cur.execute("""
+                INSERT INTO film_production_team
+                  (film_id, department, name, role, comment)
+                VALUES (%s,%s,%s,%s,%s)
+            """, (
+                film_id,
+                m.get('department'),
+                m.get('name'),
+                m.get('role'),
+                m.get('comment'),
+            ))
+
+        # 5) actors
+        cur.execute("DELETE FROM film_actors WHERE film_id=%s", (film_id,))
+        for name in (film_data.get('actors', '') or '').split(','):
+            nm = name.strip()
+            if nm:
+                cur.execute("""
+                    INSERT INTO film_actors
+                      (film_id, actor_name, character_name, comment)
+                    VALUES (%s,%s,NULL,NULL)
+                """, (film_id, nm))
+
+        # 6) equipment
+        cur.execute("DELETE FROM film_equipment WHERE film_id=%s", (film_id,))
+        eq = film_data.get('equipment', {})
+        if eq.get('equipment_name'):
+            cur.execute("""
+                INSERT INTO film_equipment
+                  (film_id,equipment_name,description,comment)
+                VALUES (%s,%s,%s,%s)
+            """, (
+                film_id,
+                eq.get('equipment_name'),
+                eq.get('description'),
+                eq.get('comment'),
+            ))
+
+        # 7) documents
+        cur.execute("DELETE FROM film_documents WHERE film_id=%s", (film_id,))
+        doc = film_data.get('documents', {})
+        if doc.get('document_type'):
+            cur.execute("""
+                INSERT INTO film_documents
+                  (film_id,document_type,file_url,comment)
+                VALUES (%s,%s,%s,%s)
+            """, (
+                film_id,
+                doc.get('document_type'),
+                doc.get('file_url'),
+                doc.get('comment'),
+            ))
+
+        # 8) institutional info
+        cur.execute(
+            "DELETE FROM film_institutional_info WHERE film_id=%s", (film_id,))
+        inst = film_data.get('institutionalInfo', {})
+        cur.execute("""
+            INSERT INTO film_institutional_info
+              (film_id,production_company,funding_company,funding_comment,
+               source,institutional_city,institutional_country)
+            VALUES (%s,%s,%s,%s,%s,%s,%s)
+        """, (
+            film_id,
+            inst.get('production_company'),
+            inst.get('funding_company'),
+            inst.get('funding_comment'),
+            inst.get('source'),
+            inst.get('institutional_city'),
+            inst.get('institutional_country'),
+        ))
+
+        # 9) screenings
+        cur.execute("DELETE FROM film_screenings WHERE film_id=%s", (film_id,))
+        for s in film_data.get('screenings', []):
+            if s.get('screening_date'):
+                cur.execute("""
+                    INSERT INTO film_screenings
+                      (film_id,screening_date,screening_city,screening_country,
+                       organizers,format,audience,film_rights,comment,source)
+                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                """, (
+                    film_id,
+                    s.get('screening_date'),
+                    s.get('screening_city'),
+                    s.get('screening_country'),
+                    s.get('organizers'),
+                    s.get('format'),
+                    s.get('audience'),
+                    s.get('film_rights'),
+                    s.get('comment'),
+                    s.get('source'),
+                ))
         conn.commit()
         return jsonify({"msg": "Film updated successfully"}), 200
-    except Exception as e:
+
+    except Exception:
         conn.rollback()
         logger.exception("Error updating film")
         return jsonify({"error": "Internal Server Error"}), 500
@@ -579,39 +669,30 @@ def delete_film(film_id):
     cur = conn.cursor()
     try:
         cur.execute("BEGIN")
-
-        # Soft delete the main film record.
+        # Soft delete
         cur.execute("""
-            UPDATE films 
-            SET deleted_at = NOW()
-            WHERE film_id = %s AND deleted_at IS NULL
+            UPDATE films SET deleted_at=NOW()
+            WHERE film_id=%s AND deleted_at IS NULL
             RETURNING film_id
         """, (film_id,))
         if cur.rowcount == 0:
             conn.rollback()
             abort(404, description="Film not found or already deleted")
 
-        # Soft delete dependent records.
-        cur.execute(
-            "UPDATE film_production_details SET deleted_at = NOW() WHERE film_id = %s", (film_id,))
-        cur.execute(
-            "UPDATE film_authors SET deleted_at = NOW() WHERE film_id = %s", (film_id,))
-        cur.execute(
-            "UPDATE film_production_team SET deleted_at = NOW() WHERE film_id = %s", (film_id,))
-        cur.execute(
-            "UPDATE film_actors SET deleted_at = NOW() WHERE film_id = %s", (film_id,))
-        cur.execute(
-            "UPDATE film_equipment SET deleted_at = NOW() WHERE film_id = %s", (film_id,))
-        cur.execute(
-            "UPDATE film_documents SET deleted_at = NOW() WHERE film_id = %s", (film_id,))
-        cur.execute(
-            "UPDATE film_institutional_info SET deleted_at = NOW() WHERE film_id = %s", (film_id,))
-        cur.execute(
-            "UPDATE film_screenings SET deleted_at = NOW() WHERE film_id = %s", (film_id,))
-
+        # cascade soft deletes
+        for tbl in [
+            'film_production_details', 'film_authors', 'film_production_team',
+            'film_actors', 'film_equipment', 'film_documents',
+            'film_institutional_info', 'film_screenings'
+        ]:
+            cur.execute(f"""
+                UPDATE {tbl} SET deleted_at=NOW()
+                WHERE film_id=%s
+            """, (film_id,))
         conn.commit()
-        return jsonify({"msg": "Film and dependent records soft deleted successfully"}), 200
-    except Exception as e:
+        return jsonify({"msg": "Film and dependent records soft deleted"}), 200
+
+    except Exception:
         conn.rollback()
         logger.exception("Error deleting film")
         return jsonify({"error": "Internal Server Error"}), 500
@@ -619,31 +700,27 @@ def delete_film(film_id):
         cur.close()
 
 ###############################
-# User Management Endpoints
+# User Management
 ###############################
 
 
 @app.route('/users', methods=['GET'])
 @jwt_required()
 def get_users():
-    # Only admin users can manage users.
     claims = get_jwt()
     if claims.get('role') != 'admin':
         return jsonify({"msg": "Access forbidden: Admins only"}), 403
 
     cur = conn.cursor()
     try:
-        # Return only active, non-admin users.
-        query = """
-            SELECT user_id, username, role, created_at 
-            FROM users 
-            WHERE deleted_at IS NULL 
-              AND LOWER(TRIM(role)) != 'admin'
-        """
-        cur.execute(query)
-        users = cur.fetchall()
-        return jsonify({"users": users})
-    except Exception as e:
+        cur.execute("""
+            SELECT user_id, username, role, created_at
+              FROM users
+             WHERE deleted_at IS NULL
+               AND LOWER(TRIM(role))!='admin'
+        """)
+        return jsonify({"users": cur.fetchall()}), 200
+    except Exception:
         logger.exception("Error fetching users")
         return jsonify({"error": "Internal Server Error"}), 500
     finally:
@@ -653,43 +730,35 @@ def get_users():
 @app.route('/users', methods=['POST'])
 @jwt_required()
 def add_user():
-    # Only admin users can add new users.
     claims = get_jwt()
     if claims.get('role') != 'admin':
         return jsonify({"msg": "Access forbidden: Admins only"}), 403
 
-    data = request.get_json()
-    username = data.get('username')
-    password = data.get('password')
-
-    if not username or not password:
+    data = request.get_json() or {}
+    u = data.get('username')
+    p = data.get('password')
+    if not u or not p:
         return jsonify({"msg": "Username and password are required"}), 400
 
     cur = conn.cursor()
     try:
-        # Check for duplicate username among active users only.
-        # Soft-deleted users (deleted_at is not NULL) are ignored.
-        cur.execute(
-            "SELECT user_id FROM users WHERE username = %s AND deleted_at IS NULL", (username,))
-        existing = cur.fetchone()
-        if existing:
+        cur.execute("""
+            SELECT user_id FROM users
+             WHERE username=%s AND deleted_at IS NULL
+        """, (u,))
+        if cur.fetchone():
             return jsonify({"msg": "Username already exists"}), 400
 
-        # Hash the password using bcrypt.
-        salt = bcrypt.gensalt()
-        password_hash = bcrypt.hashpw(
-            password.encode('utf-8'), salt).decode('utf-8')
-
-        # Insert new user with the role enforced as 'reader'.
+        hash_pw = bcrypt.hashpw(p.encode(), bcrypt.gensalt()).decode()
         cur.execute("""
-            INSERT INTO users (username, password_hash, role)
-            VALUES (%s, %s, %s)
-            RETURNING user_id
-        """, (username, password_hash, 'reader'))
-        new_user = cur.fetchone()
+            INSERT INTO users (username,password_hash,role)
+            VALUES (%s,%s,%s) RETURNING user_id
+        """, (u, hash_pw, 'reader'))
+        new_id = cur.fetchone()['user_id']
         conn.commit()
-        return jsonify({"user_id": new_user['user_id'], "msg": "User added successfully"}), 201
-    except Exception as e:
+        return jsonify({"user_id": new_id, "msg": "User added successfully"}), 201
+
+    except Exception:
         conn.rollback()
         logger.exception("Error adding user")
         return jsonify({"error": "Internal Server Error"}), 500
@@ -700,48 +769,38 @@ def add_user():
 @app.route('/users/<int:user_id>', methods=['PUT'])
 @jwt_required()
 def update_user(user_id):
-    # Only admin users can update user records.
     claims = get_jwt()
     if claims.get('role') != 'admin':
         return jsonify({"msg": "Access forbidden: Admins only"}), 403
-
-    data = request.get_json()
-    username = data.get('username')
-    password = data.get('password')
-
-    if not username or not password:
+    data = request.get_json() or {}
+    u = data.get('username')
+    p = data.get('password')
+    if not u or not p:
         return jsonify({"msg": "Username and password are required"}), 400
 
     cur = conn.cursor()
     try:
-        # Check if the new username is already taken by another active user.
-        # Soft-deleted users will be ignored here because deleted_at IS NULL
-        cur.execute(
-            "SELECT user_id FROM users WHERE username = %s AND user_id != %s AND deleted_at IS NULL",
-            (username, user_id)
-        )
-        duplicate = cur.fetchone()
-        if duplicate:
+        cur.execute("""
+            SELECT user_id FROM users
+             WHERE username=%s AND user_id!=%s AND deleted_at IS NULL
+        """, (u, user_id))
+        if cur.fetchone():
             return jsonify({"msg": "Username already exists"}), 400
 
-        # Hash the new password.
-        salt = bcrypt.gensalt()
-        password_hash = bcrypt.hashpw(
-            password.encode('utf-8'), salt).decode('utf-8')
-
-        # Update the user record.
+        hash_pw = bcrypt.hashpw(p.encode(), bcrypt.gensalt()).decode()
         cur.execute("""
             UPDATE users
-            SET username = %s, password_hash = %s
-            WHERE user_id = %s AND deleted_at IS NULL
-            RETURNING user_id
-        """, (username, password_hash, user_id))
+               SET username=%s,password_hash=%s
+             WHERE user_id=%s AND deleted_at IS NULL
+             RETURNING user_id
+        """, (u, hash_pw, user_id))
         if cur.rowcount == 0:
             conn.rollback()
             return jsonify({"msg": "User not found or already deleted"}), 404
         conn.commit()
         return jsonify({"msg": "User updated successfully"}), 200
-    except Exception as e:
+
+    except Exception:
         conn.rollback()
         logger.exception("Error updating user")
         return jsonify({"error": "Internal Server Error"}), 500
@@ -752,7 +811,6 @@ def update_user(user_id):
 @app.route('/users/<int:user_id>', methods=['DELETE'])
 @jwt_required()
 def delete_user(user_id):
-    # Only admin users can delete users.
     claims = get_jwt()
     if claims.get('role') != 'admin':
         return jsonify({"msg": "Access forbidden: Admins only"}), 403
@@ -760,9 +818,8 @@ def delete_user(user_id):
     cur = conn.cursor()
     try:
         cur.execute("""
-            UPDATE users
-            SET deleted_at = NOW()
-            WHERE user_id = %s AND deleted_at IS NULL
+            UPDATE users SET deleted_at=NOW()
+            WHERE user_id=%s AND deleted_at IS NULL
             RETURNING user_id
         """, (user_id,))
         if cur.rowcount == 0:
@@ -770,7 +827,8 @@ def delete_user(user_id):
             return jsonify({"msg": "User not found or already deleted"}), 404
         conn.commit()
         return jsonify({"msg": "User soft deleted successfully"}), 200
-    except Exception as e:
+
+    except Exception:
         conn.rollback()
         logger.exception("Error deleting user")
         return jsonify({"error": "Internal Server Error"}), 500
@@ -779,5 +837,4 @@ def delete_user(user_id):
 
 
 if __name__ == '__main__':
-    # In production, set debug=False.
     app.run(port=3001, debug=True)

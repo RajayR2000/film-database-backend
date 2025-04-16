@@ -236,4 +236,26 @@ ALTER TABLE users DROP CONSTRAINT users_username_key;
 
 CREATE UNIQUE INDEX unique_active_username ON users(username) WHERE deleted_at IS NULL;
 
+-- production details
+ALTER TABLE film_production_details
+  DROP CONSTRAINT IF EXISTS film_production_details_shooting_location_id_fkey,
+  DROP COLUMN IF EXISTS shooting_location_id,
+  ADD COLUMN shooting_city    VARCHAR(100),
+  ADD COLUMN shooting_country VARCHAR(100);
+
+-- screenings
+ALTER TABLE film_screenings
+  DROP CONSTRAINT IF EXISTS film_screenings_location_id_fkey,
+  DROP COLUMN IF EXISTS location_id,
+  ADD COLUMN screening_city    VARCHAR(100),
+  ADD COLUMN screening_country VARCHAR(100);
+
+-- institutional info
+ALTER TABLE film_institutional_info
+  DROP CONSTRAINT IF EXISTS film_institutional_info_funding_location_id_fkey;
+  DROP COLUMN IF EXISTS funding_location_id,
+  ADD COLUMN institutional_city    VARCHAR(100),
+  ADD COLUMN institutional_country VARCHAR(100);
+
+
 commit;
