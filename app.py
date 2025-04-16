@@ -182,6 +182,7 @@ def get_full_film_data():
                   f.synopsis,
                   f.created_at,
                   f.updated_at,
+                  f.av_annotate_link as link,
 
                   pd.production_timeframe,
                   pd.post_production_studio,
@@ -202,7 +203,9 @@ def get_full_film_data():
                   json_agg(DISTINCT jsonb_build_object('equipment_name', eq.equipment_name, 'description', eq.description, 'comment', eq.comment)) FILTER (WHERE eq.equipment_id IS NOT NULL) AS equipment,
                   json_agg(DISTINCT jsonb_build_object('document_type', doc.document_type, 'file_url', doc.file_url, 'comment', doc.comment)) FILTER (WHERE doc.document_id IS NOT NULL) AS documents,
                   json_agg(DISTINCT jsonb_build_object('production_company', info.production_company, 'funding_company', info.funding_company, 'funding_comment', info.funding_comment, 'source', info.source)) FILTER (WHERE info.info_id IS NOT NULL) AS institutional_info,
-                  json_agg(DISTINCT jsonb_build_object('screening_date', s.screening_date, 'organizers', s.organizers, 'format', s.format, 'audience', s.audience, 'film_rights', s.film_rights, 'comment', s.comment, 'source', s.source)) FILTER (WHERE s.screening_id IS NOT NULL) AS screenings
+                  json_agg(DISTINCT jsonb_build_object('screening_date', s.screening_date, 'organizers', s.organizers, 'format', s.format, 'audience', s.audience, 'film_rights', s.film_rights, 'comment', s.comment, 'source', s.source)) FILTER (WHERE s.screening_id IS NOT NULL) AS screenings,
+                  concat('"',f.title, '". EAC Lab Database. Indiana University Bloomington. Accessed ' ,TO_CHAR(NOW(), 'DD-MM-YYYY'), '. https://localhost:5000/films') as reference
+
 
                 FROM films f
                 LEFT JOIN film_production_details pd ON f.film_id = pd.film_id
@@ -245,14 +248,15 @@ def create_film():
 
         # 1. Insert into films table
         cur.execute("""
-            INSERT INTO films (title, release_year, runtime, synopsis)
-            VALUES (%s, %s, %s, %s)
+            INSERT INTO films (title, release_year, runtime, synopsis,av_annotate_link)
+            VALUES (%s, %s, %s, %s, %s)
             RETURNING film_id
         """, (
             film_data.get('title'),
             film_data.get('release_year'),
             film_data.get('runtime'),
-            film_data.get('synopsis')
+            film_data.get('synopsis'),
+            film_data.get('av_annotate_link')
         ))
         film_id = cur.fetchone()['film_id']
 
@@ -408,6 +412,7 @@ def update_film(film_id):
                 release_year = %s,
                 runtime = %s,
                 synopsis = %s,
+                av_annotate_link = %s,
                 updated_at = NOW()
             WHERE film_id = %s
             RETURNING film_id
@@ -416,6 +421,7 @@ def update_film(film_id):
             film_data.get('release_year'),
             film_data.get('runtime'),
             film_data.get('synopsis'),
+            film_data.get('av_annotate_link'),
             film_id
         ))
         if cur.rowcount == 0:
