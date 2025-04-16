@@ -618,7 +618,166 @@ def delete_film(film_id):
     finally:
         cur.close()
 
+###############################
+# User Management Endpoints
+###############################
+
+
+@app.route('/users', methods=['GET'])
+@jwt_required()
+def get_users():
+    # Only admin users can manage users.
+    claims = get_jwt()
+    if claims.get('role') != 'admin':
+        return jsonify({"msg": "Access forbidden: Admins only"}), 403
+
+    cur = conn.cursor()
+    try:
+        # Return only active, non-admin users.
+        query = """
+            SELECT user_id, username, role, created_at 
+            FROM users 
+            WHERE deleted_at IS NULL 
+              AND LOWER(TRIM(role)) != 'admin'
+        """
+        cur.execute(query)
+        users = cur.fetchall()
+        return jsonify({"users": users})
+    except Exception as e:
+        logger.exception("Error fetching users")
+        return jsonify({"error": "Internal Server Error"}), 500
+    finally:
+        cur.close()
+
+
+@app.route('/users', methods=['POST'])
+@jwt_required()
+def add_user():
+    # Only admin users can add new users.
+    claims = get_jwt()
+    if claims.get('role') != 'admin':
+        return jsonify({"msg": "Access forbidden: Admins only"}), 403
+
+    data = request.get_json()
+    username = data.get('username')
+    password = data.get('password')
+
+    if not username or not password:
+        return jsonify({"msg": "Username and password are required"}), 400
+
+    cur = conn.cursor()
+    try:
+        # Check for duplicate username among active users only.
+        # Soft-deleted users (deleted_at is not NULL) are ignored.
+        cur.execute(
+            "SELECT user_id FROM users WHERE username = %s AND deleted_at IS NULL", (username,))
+        existing = cur.fetchone()
+        if existing:
+            return jsonify({"msg": "Username already exists"}), 400
+
+        # Hash the password using bcrypt.
+        salt = bcrypt.gensalt()
+        password_hash = bcrypt.hashpw(
+            password.encode('utf-8'), salt).decode('utf-8')
+
+        # Insert new user with the role enforced as 'reader'.
+        cur.execute("""
+            INSERT INTO users (username, password_hash, role)
+            VALUES (%s, %s, %s)
+            RETURNING user_id
+        """, (username, password_hash, 'reader'))
+        new_user = cur.fetchone()
+        conn.commit()
+        return jsonify({"user_id": new_user['user_id'], "msg": "User added successfully"}), 201
+    except Exception as e:
+        conn.rollback()
+        logger.exception("Error adding user")
+        return jsonify({"error": "Internal Server Error"}), 500
+    finally:
+        cur.close()
+
+
+@app.route('/users/<int:user_id>', methods=['PUT'])
+@jwt_required()
+def update_user(user_id):
+    # Only admin users can update user records.
+    claims = get_jwt()
+    if claims.get('role') != 'admin':
+        return jsonify({"msg": "Access forbidden: Admins only"}), 403
+
+    data = request.get_json()
+    username = data.get('username')
+    password = data.get('password')
+
+    if not username or not password:
+        return jsonify({"msg": "Username and password are required"}), 400
+
+    cur = conn.cursor()
+    try:
+        # Check if the new username is already taken by another active user.
+        # Soft-deleted users will be ignored here because deleted_at IS NULL
+        cur.execute(
+            "SELECT user_id FROM users WHERE username = %s AND user_id != %s AND deleted_at IS NULL",
+            (username, user_id)
+        )
+        duplicate = cur.fetchone()
+        if duplicate:
+            return jsonify({"msg": "Username already exists"}), 400
+
+        # Hash the new password.
+        salt = bcrypt.gensalt()
+        password_hash = bcrypt.hashpw(
+            password.encode('utf-8'), salt).decode('utf-8')
+
+        # Update the user record.
+        cur.execute("""
+            UPDATE users
+            SET username = %s, password_hash = %s
+            WHERE user_id = %s AND deleted_at IS NULL
+            RETURNING user_id
+        """, (username, password_hash, user_id))
+        if cur.rowcount == 0:
+            conn.rollback()
+            return jsonify({"msg": "User not found or already deleted"}), 404
+        conn.commit()
+        return jsonify({"msg": "User updated successfully"}), 200
+    except Exception as e:
+        conn.rollback()
+        logger.exception("Error updating user")
+        return jsonify({"error": "Internal Server Error"}), 500
+    finally:
+        cur.close()
+
+
+@app.route('/users/<int:user_id>', methods=['DELETE'])
+@jwt_required()
+def delete_user(user_id):
+    # Only admin users can delete users.
+    claims = get_jwt()
+    if claims.get('role') != 'admin':
+        return jsonify({"msg": "Access forbidden: Admins only"}), 403
+
+    cur = conn.cursor()
+    try:
+        cur.execute("""
+            UPDATE users
+            SET deleted_at = NOW()
+            WHERE user_id = %s AND deleted_at IS NULL
+            RETURNING user_id
+        """, (user_id,))
+        if cur.rowcount == 0:
+            conn.rollback()
+            return jsonify({"msg": "User not found or already deleted"}), 404
+        conn.commit()
+        return jsonify({"msg": "User soft deleted successfully"}), 200
+    except Exception as e:
+        conn.rollback()
+        logger.exception("Error deleting user")
+        return jsonify({"error": "Internal Server Error"}), 500
+    finally:
+        cur.close()
+
 
 if __name__ == '__main__':
     # In production, set debug=False.
-    app.run(port=3001, debug=False)
+    app.run(port=3001, debug=True)
