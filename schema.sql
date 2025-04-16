@@ -232,4 +232,8 @@ ALTER TABLE films ADD COLUMN av_annotate_link varchar(100);
 
 ALTER TABLE users ADD COLUMN deleted_at TIMESTAMP NULL;
 
+ALTER TABLE users DROP CONSTRAINT users_username_key;
+
+CREATE UNIQUE INDEX unique_active_username ON users(username) WHERE deleted_at IS NULL;
+
 commit;
